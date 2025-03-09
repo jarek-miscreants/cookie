@@ -1,7 +1,7 @@
 import 'https://cdn.jsdelivr.net/gh/orestbida/cookieconsent@3.1.0/dist/cookieconsent.umd.js';
 
 // Enable dark mode
-document.documentElement.classList.add('cc--darkmode');
+document.documentElement.classList.add('cc--darkmode', 'cc--elegant-black');
 
 CookieConsent.run({
     guiOptions: {
