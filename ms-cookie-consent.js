@@ -36,6 +36,52 @@
     }
   }
 
+  // Immediately intercept scripts with script-type as they enter the DOM
+  // This runs BEFORE DOMContentLoaded so scripts in the body/footer are caught before execution
+  const scriptObserver = new MutationObserver(mutations => {
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeName === 'SCRIPT' && node.getAttribute('script-type')) {
+          const scriptTypeAttr = node.getAttribute('script-type').trim();
+          const isForced = scriptTypeAttr.startsWith('!');
+          const category = isForced ? scriptTypeAttr.substring(1).toLowerCase() : scriptTypeAttr.toLowerCase();
+
+          // Skip necessary, forced, and already-blocked scripts
+          if (category === 'necessary' || isForced || node.type === 'text/plain') return;
+
+          // Check if consent already granted for this category
+          const saved = localStorage.getItem('cookieConsent');
+          if (saved) {
+            const prefs = JSON.parse(saved);
+            if (prefs[category]) return; // Consent granted, let it run
+          }
+
+          // Block execution by removing src and content before the browser runs it
+          const placeholder = document.createElement('script');
+          placeholder.type = 'text/plain';
+          placeholder.setAttribute('script-type', scriptTypeAttr);
+          placeholder.setAttribute('data-original-type', node.type || 'application/javascript');
+          if (node.src) {
+            placeholder.setAttribute('data-src', node.src);
+            node.removeAttribute('src'); // Prevent loading
+          }
+          if (node.id) placeholder.id = node.id;
+          if (node.async) placeholder.setAttribute('data-async', 'true');
+          if (node.defer) placeholder.setAttribute('data-defer', 'true');
+          placeholder.textContent = node.textContent;
+
+          // Replace the script synchronously before it executes
+          node.type = 'text/plain';
+          if (node.parentNode) {
+            node.parentNode.replaceChild(placeholder, node);
+          }
+        }
+      });
+    });
+  });
+
+  scriptObserver.observe(document.documentElement, { childList: true, subtree: true });
+
   // Utility functions for DOM operations
   const DOMUtils = {
     // Cache for DOM elements to avoid repeated queries
@@ -154,16 +200,17 @@
     createActiveScriptFromPlaceholder(placeholder) {
       const script = document.createElement('script');
 
-      // Restore original type and attributes
-      script.type = placeholder.getAttribute('data-original-type') || 'application/javascript';
+      // Restore original type - support both observer-blocked and pre-blocked scripts
+      const originalType = placeholder.getAttribute('data-original-type');
+      script.type = (originalType && originalType !== 'text/plain') ? originalType : 'application/javascript';
       script.setAttribute('script-type', placeholder.getAttribute('script-type'));
 
-      // Copy other attributes
-      if (placeholder.hasAttribute('data-src')) script.src = placeholder.getAttribute(
-        'data-src');
+      // Restore src - support both data-src (observer-blocked) and src (pre-blocked)
+      const src = placeholder.getAttribute('data-src') || placeholder.getAttribute('src');
+      if (src) script.src = src;
       if (placeholder.id) script.id = placeholder.id;
-      if (placeholder.hasAttribute('data-async')) script.async = true;
-      if (placeholder.hasAttribute('data-defer')) script.defer = true;
+      if (placeholder.hasAttribute('data-async') || placeholder.async) script.async = true;
+      if (placeholder.hasAttribute('data-defer') || placeholder.defer) script.defer = true;
 
       // Copy content
       script.textContent = placeholder.textContent;
@@ -736,6 +783,8 @@
 
   // Initialize the consent manager when DOM is ready
   onDOMReady(() => {
+    // Stop the observer - all scripts have been parsed
+    scriptObserver.disconnect();
     ConsentManager.init();
     // Make ConsentManager available globally
     window.ConsentManager = ConsentManager;
